@@ -956,7 +956,10 @@ class GlassWidget(QWidget):
     @Slot(str)
     def _on_fetch_err(self, e):
         from PySide6.QtWidgets import QMessageBox
-        QMessageBox.critical(self, '错误', f'获取失败:\n{e}')
+        # 去掉 ANSI 颜色码（如 [0;31m、[0m）
+        import re
+        clean = re.sub(r'\x1b\[[0-9;]*m', '', e)
+        QMessageBox.critical(self, '错误', f'获取失败:\n{clean}')
         self.fetch_btn.setEnabled(True)
         self.status_lbl.setText('🐾 就绪')
 

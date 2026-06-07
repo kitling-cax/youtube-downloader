@@ -6,13 +6,21 @@ from utils.config import get_default_cookie_file
 
 
 def fetch_video_info(url: str, proxy: str = None, cookie_file: str = None) -> dict:
-    """获取视频信息，返回包含标题、时长、格式等信息的字典"""
+    """获取视频信息，返回包含标题、时长、格式等信息的字典
+
+    对于播放列表类型（/upload/video 之类），如果第一个视频失效，
+    ignoreerrors=True 让我们能拿到后续视频的信息，而不是整个失败。
+    """
     if cookie_file is None:
         cookie_file = get_default_cookie_file()
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
+        # 关键：跳过列表中无效的视频（被删除/地区限制），避免一个失败中断整个
+        'ignoreerrors': True,
+        # 禁用 ANSI 颜色码（避免 [0;31m 这类乱码出现在 GUI 弹窗里）
+        'color': 'no_color',
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Referer': get_referer(url),
@@ -25,6 +33,21 @@ def fetch_video_info(url: str, proxy: str = None, cookie_file: str = None) -> di
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
+
+        # extract_info 在 ignoreerrors=True 时可能返回 None（极端情况，比如 cookie 完全失效）
+        if info is None:
+            return {
+                'title': '获取失败',
+                'duration': 0,
+                'thumbnail': '',
+                'description': '无法获取视频信息，请检查 Cookie 或网络',
+                'uploader': '',
+                'view_count': 0,
+                'upload_date': '',
+                'formats': [],
+                'is_playlist': False,
+                'playlist_count': 0,
+            }
 
         # 如果是播放列表类型，取第一个视频的信息
         if info.get('_type') in ('playlist', 'multi_video'):
@@ -86,6 +109,7 @@ def fetch_playlist_info(url: str, proxy: str = None, cookie_file: str = None) ->
         'skip_download': True,
         'extract_flat': False,
         'ignoreerrors': True,  # 关键：跳过列表中无效/被删除/地区限制的视频，而不是让整个列表获取失败
+        'color': 'no_color',  # 禁用 ANSI 颜色码
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Referer': get_referer(url),
