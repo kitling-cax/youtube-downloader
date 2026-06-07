@@ -85,6 +85,7 @@ def fetch_playlist_info(url: str, proxy: str = None, cookie_file: str = None) ->
         'no_warnings': True,
         'skip_download': True,
         'extract_flat': False,
+        'ignoreerrors': True,  # 关键：跳过列表中无效/被删除/地区限制的视频，而不是让整个列表获取失败
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Referer': get_referer(url),
@@ -97,17 +98,26 @@ def fetch_playlist_info(url: str, proxy: str = None, cookie_file: str = None) ->
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
+        if info is None:
+            # 整个列表获取都失败（极端情况，比如 cookie 失效）
+            return []
         entries = info.get('entries', [])
         videos = []
+        skipped = 0
         for i, entry in enumerate(entries):
-            if entry:
-                videos.append({
-                    'index': i + 1,
-                    'title': entry.get('title', 'Unknown'),
-                    'url': entry.get('url') or entry.get('webpage_url', ''),
-                    'duration': entry.get('duration', 0),
-                    'id': entry.get('id', ''),
-                })
+            if not entry:
+                # entry 为 None 通常是视频被删除/地区限制/无访问权限
+                skipped += 1
+                continue
+            videos.append({
+                'index': len(videos) + 1,  # 用实际数量作为新索引，跳过无效项
+                'title': entry.get('title', 'Unknown'),
+                'url': entry.get('url') or entry.get('webpage_url', ''),
+                'duration': entry.get('duration', 0),
+                'id': entry.get('id', ''),
+            })
+        if skipped:
+            print(f"[playlist] 跳过 {skipped} 个无效视频（已删除/地区限制/无权限）")
         return videos
 
 
