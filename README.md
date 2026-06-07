@@ -20,14 +20,14 @@ youtube_download/
 ├── main.py                  # GUI 入口
 ├── cli.py                   # 命令行入口
 ├── requirements.txt         # 依赖
-├── cookie.txt               # B站/YouTube cookie（Netscape 格式）
+├── cookie.example.txt       # Cookie 模板（真实 cookie 不入库）
 ├── bin/ffmpeg.exe           # 内置 ffmpeg（音视频合并）
 ├── core/
 │   ├── downloader.py        # yt-dlp 封装，支持单视频/播放列表
 │   └── video_info.py        # 视频信息获取 + 格式化工具
 ├── ui/gui.py                # PySide6 无边框玻璃拟态窗口
 ├── utils/
-│   ├── config.py            # 配置文件（JSON 持久化到 ~/.youtube_downloader_config.json）
+│   ├── config.py            # 配置 + 用户目录路径解析
 │   └── __init__.py          # ffmpeg 探测、Referer 提取
 ├── dist/YouTube下载器/      # 打包产物
 ├── YouTube下载器.spec       # PyInstaller 打包配置（主用）
@@ -89,11 +89,12 @@ python cli.py -u "..." -p "http://127.0.0.1:7890"
 1. 浏览器装「Get cookies.txt LOCALLY」或「Cookie-Editor」扩展
 2. 登录 bilibili.com 后导出
 3. **必须是纯 Netscape 格式**（不能混 JSON）
-4. 覆盖到项目根的 `cookie.txt`（GUI 启动会自动读这个）
+4. 把导出的文件保存到 **`~/.youtube_downloader/cookie.txt`**（即 `C:\Users\<你>\.youtube_downloader\cookie.txt`）
+5. GUI 启动会自动读取这个路径
 
 **YouTube**：大多视频免登录即可，部分需要登录验证。
 
-> ⚠️ 不要把 `cookie.txt` 提交到 Git
+> ⚠️ **不要把 cookie 文件提交到 Git**。本项目把 cookie 放在用户主目录的隐藏文件夹里，从源头避免泄露。`cookie.example.txt` 仅为文档模板。
 
 ## ⚠️ Cookie 格式注意事项
 
@@ -161,7 +162,11 @@ for f in info.get('formats', []):
 
 ## 📜 版本历史
 
-- 2026-06-05：修复 GUI 播放列表不可见问题，改为 QListWidget；新增播放列表加载错误弹窗；同步有效 B 站大会员 cookie
+- **v1.0.0** (2026-06-07)：首次发布到 GitHub
+  - 修复 GUI 播放列表不可见问题，改为 QListWidget
+  - 新增播放列表加载错误弹窗
+  - **重要：cookie 路径从项目内 `cookie.txt` 迁移到用户目录 `~/.youtube_downloader/cookie.txt`**，从源头避免泄露
+  - 添加 `.gitignore`、PR 流程文档
 - 2026-05-26：spec 升级为打包 ffmpeg 的目录模式
 - 2026-05-20：单文件 GUI 版本
 - 2026-04-28：初版
