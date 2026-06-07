@@ -4,7 +4,7 @@ import threading
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QLineEdit, QPushButton, QComboBox, QTextEdit,
                                  QProgressBar, QFrame, QGridLayout, QSizePolicy, QListWidget,
-                                 QListWidgetItem)
+                                 QListWidgetItem, QDialog)
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtGui import QFont, QPainter, QPixmap, QScreen
 from PIL import Image
@@ -52,6 +52,179 @@ class FramelessWindow(QMainWindow):
 
     def mouseReleaseEvent(self, event):
         self.dragging = False
+
+
+class PlaylistDialog(QDialog):
+    """播放列表选择对话框（独立弹窗）"""
+
+    selection_changed = Signal(int, int)  # (已选数, 总数)
+
+    def __init__(self, videos, parent=None):
+        super().__init__(parent)
+        self.videos = videos
+        self.setWindowTitle(f'📋 播放列表 - 共 {len(videos)} 个视频')
+        self.setMinimumSize(520, 420)
+        self.resize(560, 460)
+        # 独立窗口 + 任务栏图标
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
+
+        self._setup_ui()
+        self._populate()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+
+        # 标题栏
+        title_bar = QHBoxLayout()
+        title_lbl = QLabel('📋 选择要下载的视频')
+        title_lbl.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
+        title_bar.addWidget(title_lbl)
+        title_bar.addStretch()
+
+        self.count_lbl = QLabel('')
+        self.count_lbl.setFont(QFont('Microsoft YaHei', 9))
+        self.count_lbl.setStyleSheet('color: #5BA3C6;')
+        title_bar.addWidget(self.count_lbl)
+        layout.addLayout(title_bar)
+
+        # 视频列表
+        self.list_widget = QListWidget()
+        self.list_widget.setFont(QFont('Microsoft YaHei', 9))
+        self.list_widget.setSelectionMode(QListWidget.NoSelection)
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #87CEEB;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 6px 8px;
+                border-radius: 4px;
+                border-bottom: 1px solid #F0F0F0;
+            }
+            QListWidget::item:hover {
+                background-color: rgba(135, 206, 235, 60);
+            }
+            QListWidget::item:checked {
+                background-color: rgba(135, 206, 235, 200);
+                color: #003366;
+            }
+        """)
+        self.list_widget.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self.list_widget, 1)
+
+        # 按钮区
+        btn_bar = QHBoxLayout()
+        btn_bar.setSpacing(8)
+
+        self.btn_all = QPushButton('☑️ 全选')
+        self.btn_all.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+        self.btn_all.setFixedSize(90, 32)
+        self.btn_all.setCursor(Qt.PointingHandCursor)
+        self.btn_all.setStyleSheet("""
+            QPushButton {
+                background-color: #FF69B4; color: white;
+                border-radius: 16px; border: none;
+            }
+            QPushButton:hover { background-color: #FF1493; }
+        """)
+        self.btn_all.clicked.connect(self._on_toggle_all)
+        btn_bar.addWidget(self.btn_all)
+
+        self.btn_invert = QPushButton('🔄 反选')
+        self.btn_invert.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+        self.btn_invert.setFixedSize(90, 32)
+        self.btn_invert.setCursor(Qt.PointingHandCursor)
+        self.btn_invert.setStyleSheet("""
+            QPushButton {
+                background-color: #87CEEB; color: white;
+                border-radius: 16px; border: none;
+            }
+            QPushButton:hover { background-color: #5BA3C6; }
+        """)
+        self.btn_invert.clicked.connect(self._on_invert)
+        btn_bar.addWidget(self.btn_invert)
+
+        btn_bar.addStretch()
+
+        self.btn_close = QPushButton('✅ 确定')
+        self.btn_close.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+        self.btn_close.setFixedSize(100, 32)
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #32CD32; color: white;
+                border-radius: 16px; border: none;
+            }
+            QPushButton:hover { background-color: #228B22; }
+        """)
+        self.btn_close.clicked.connect(self.accept)
+        btn_bar.addWidget(self.btn_close)
+        layout.addLayout(btn_bar)
+
+    def _populate(self):
+        """填充视频列表（默认全选）"""
+        self.list_widget.blockSignals(True)
+        for v in self.videos:
+            item = QListWidgetItem(f"{v['index']:02d}. {v['title']}")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            item.setData(Qt.UserRole, v['index'] - 1)
+            # 灰色显示时长
+            duration = v.get('duration') or 0
+            if duration:
+                m, s = divmod(int(duration), 60)
+                h, m = divmod(m, 60)
+                dur_str = f"{h:02d}:{m:02d}:{s:02d}"
+                item.setText(f"{v['index']:02d}. {v['title']}  ({dur_str})")
+            self.list_widget.addItem(item)
+        self.list_widget.blockSignals(False)
+        self._update_count()
+
+    def _update_count(self):
+        total = len(self.videos)
+        sel = sum(1 for i in range(self.list_widget.count())
+                  if self.list_widget.item(i).checkState() == Qt.Checked)
+        self.count_lbl.setText(f'已选 {sel}/{total}')
+        self.btn_all.setText('❌ 全不选' if sel == total else '☑️ 全选')
+        self.selection_changed.emit(sel, total)
+
+    def _on_item_changed(self, item):
+        self._update_count()
+
+    def _on_toggle_all(self):
+        total = self.list_widget.count()
+        all_selected = all(
+            self.list_widget.item(i).checkState() == Qt.Checked
+            for i in range(total)
+        )
+        self.list_widget.blockSignals(True)
+        state = Qt.Unchecked if all_selected else Qt.Checked
+        for i in range(total):
+            self.list_widget.item(i).setCheckState(state)
+        self.list_widget.blockSignals(False)
+        self._update_count()
+
+    def _on_invert(self):
+        total = self.list_widget.count()
+        self.list_widget.blockSignals(True)
+        for i in range(total):
+            item = self.list_widget.item(i)
+            item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+        self.list_widget.blockSignals(False)
+        self._update_count()
+
+    def get_selected_indices(self) -> list:
+        """返回选中的视频索引列表（0-based）"""
+        result = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                result.append(item.data(Qt.UserRole))
+        return result
 
 
 class GlassWidget(QWidget):
@@ -231,8 +404,10 @@ class GlassWidget(QWidget):
 
         self.playlist_chk = QPushButton('📋 播放列表')
         self.playlist_chk.setFont(QFont('Microsoft YaHei', 7))
-        self.playlist_chk.setCheckable(True)
+        # 改为普通按钮：点击弹出独立弹窗，不再嵌在主窗口里
+        self.playlist_chk.setCheckable(False)
         self.playlist_chk.setEnabled(False)
+        self.playlist_chk.setCursor(Qt.PointingHandCursor)
         self.playlist_chk.setStyleSheet("""
             QPushButton {
                 background-color: rgba(200, 200, 200, 150);
@@ -241,18 +416,17 @@ class GlassWidget(QWidget):
                 padding: 4px 8px;
                 border: none;
             }
-            QPushButton:checked {
-                background-color: rgba(135, 206, 235, 200);
-                color: #333;
-            }
+            QPushButton:hover { background-color: rgba(135, 206, 235, 200); color: #333; }
         """)
+        self.playlist_chk.clicked.connect(self._on_open_playlist_dialog)
         gl.addWidget(self.playlist_chk, 1, 4)
 
         # ===== 播放列表区域 (2/3宽度居中，可折叠) =====
+        # 改为弹窗方案：保留 widget 占位（兼容旧代码引用），但默认隐藏、实际不用
         self.playlist_w = QWidget()
         self.playlist_w.setVisible(False)
-        self.playlist_w.setMinimumHeight(120)
-        self.playlist_w.setStyleSheet('background-color: rgba(200,200,255,80); border-radius: 8px; margin: 1px 0;')
+        self.playlist_w.setFixedHeight(0)
+        self.playlist_w.setStyleSheet('background: transparent;')
         pl_layout_outer = QHBoxLayout(self.playlist_w)
         pl_layout_outer.setContentsMargins(0, 0, 0, 0)
         pl_layout_outer.addStretch()
@@ -283,7 +457,9 @@ class GlassWidget(QWidget):
             }
             QPushButton:hover { background-color: #FF1493; }
         """)
-        self.pl_all_btn.clicked.connect(self._on_playlist_select_all)
+        # pl_all_btn 在隐藏的占位 widget 里，逻辑已迁到 PlaylistDialog
+        # 这里 connect 一个 noop，避免 AttributeError
+        self.pl_all_btn.clicked.connect(lambda: None)
         pl_hl.addWidget(self.pl_all_btn)
 
         self.pl_invert_btn = QPushButton('🔄 反选')
@@ -298,7 +474,8 @@ class GlassWidget(QWidget):
             }
             QPushButton:hover { background-color: #5BA3C6; }
         """)
-        self.pl_invert_btn.clicked.connect(self._on_playlist_invert)
+        # pl_invert_btn 在隐藏的占位 widget 里，逻辑已迁到 PlaylistDialog
+        self.pl_invert_btn.clicked.connect(lambda: None)
         pl_hl.addWidget(self.pl_invert_btn)
 
         pl_hl.addStretch()
@@ -313,6 +490,11 @@ class GlassWidget(QWidget):
         self.pl_list = QListWidget()
         self.pl_list.setFont(QFont('Microsoft YaHei', 8))
         self.pl_list.setSelectionMode(QListWidget.NoSelection)
+        # 关键修复：限制列表本身最大高度，超出滚动显示
+        self.pl_list.setMaximumHeight(130)
+        # 保证垂直方向有滚动条
+        self.pl_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.pl_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.pl_list.setStyleSheet("""
             QListWidget {
                 background-color: rgba(255, 255, 255, 200);
@@ -332,7 +514,7 @@ class GlassWidget(QWidget):
                 color: #003366;
             }
         """)
-        self.pl_list.itemChanged.connect(self._on_playlist_item_changed)
+        self.pl_list.itemChanged.connect(self._on_playlist_item_changed_legacy)
         pl_vl.addWidget(self.pl_list)
 
         pl_layout_outer.addWidget(pl_inner)
@@ -343,7 +525,7 @@ class GlassWidget(QWidget):
         info_layout_outer.addStretch()
         main.addWidget(info_w)
 
-        # 播放列表区域
+        # 播放列表区域（保留占位但不显示，实际使用弹窗）
         main.addWidget(self.playlist_w)
 
         # ===== 路径和代理区 (2/3宽度居中) =====
@@ -687,76 +869,79 @@ class GlassWidget(QWidget):
         self.playlist_videos = videos
         self.selected_videos = set(range(len(videos)))  # 默认全选
 
-        self.pl_list.blockSignals(True)
-        self.pl_list.clear()
-        for v in videos:
-            item = QListWidgetItem(f"{v['index']}. {v['title']}")
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
-            item.setData(Qt.UserRole, v['index'] - 1)
-            self.pl_list.addItem(item)
-        self.pl_list.blockSignals(False)
-
-        total = len(videos)
-        self.pl_count_lbl.setText(f'已选 {total}/{total}')
-        self.playlist_w.setVisible(True)
-        self.playlist_w.setMinimumHeight(160)
-        self.playlist_chk.setChecked(True)
+        # 启用"播放列表"按钮
         self.playlist_chk.setEnabled(True)
+        self.playlist_chk.setText(f'📋 播放列表 ({len(videos)})')
         self.download_btn.setEnabled(True)
-        self._log(f'✅ 已加载 {total} 个视频到列表')
 
-    @Slot(QListWidgetItem)
-    def _on_playlist_item_changed(self, item):
-        idx = item.data(Qt.UserRole)
-        if item.checkState() == Qt.Checked:
-            self.selected_videos.add(idx)
-        else:
-            self.selected_videos.discard(idx)
-        total = len(self.playlist_videos)
-        sel = len(self.selected_videos)
-        self.pl_count_lbl.setText(f'已选 {sel}/{total}')
-        self.pl_all_btn.setText('☑️ 全选' if sel < total else '❌ 全不选')
+        # 自动弹出独立窗口
+        self._open_playlist_dialog()
 
-    def _on_playlist_invert(self):
-        """反选"""
+        self._log(f'✅ 已加载 {len(videos)} 个视频，已弹出选择窗口')
+
+    def _open_playlist_dialog(self):
+        """打开播放列表选择弹窗（独立窗口）"""
         if not self.playlist_videos:
             return
-        total = len(self.playlist_videos)
-        new_selected = set(range(total)) - self.selected_videos
-        self.pl_list.blockSignals(True)
-        for i in range(self.pl_list.count()):
-            item = self.pl_list.item(i)
-            idx = item.data(Qt.UserRole)
-            item.setCheckState(Qt.Checked if idx in new_selected else Qt.Unchecked)
-        self.pl_list.blockSignals(False)
-        self.selected_videos = new_selected
-        sel = len(self.selected_videos)
-        self.pl_count_lbl.setText(f'已选 {sel}/{total}')
-        self.pl_all_btn.setText('☑️ 全选' if sel < total else '❌ 全不选')
+        # 如果已存在且未关闭，复用并置顶
+        if hasattr(self, '_playlist_dialog') and self._playlist_dialog is not None:
+            try:
+                self._playlist_dialog.show()
+                self._playlist_dialog.raise_()
+                self._playlist_dialog.activateWindow()
+                return
+            except RuntimeError:
+                self._playlist_dialog = None
 
-    def _on_playlist_select_all(self):
-        """全选/取消全选"""
-        total = len(self.playlist_videos)
-        if not total:
+        self._playlist_dialog = PlaylistDialog(self.playlist_videos, self)
+        self._playlist_dialog.selection_changed.connect(self._on_dialog_selection_changed)
+        # 居中显示在主窗口旁边
+        self._position_dialog_near_main()
+        self._playlist_dialog.show()
+
+    def _position_dialog_near_main(self):
+        """把弹窗放在主窗口右侧（屏幕装不下时回退居中）"""
+        if not hasattr(self, '_playlist_dialog') or not self._playlist_dialog:
             return
-        all_selected = len(self.selected_videos) == total
-        self.pl_list.blockSignals(True)
-        if all_selected:
-            # 全不选
-            for i in range(self.pl_list.count()):
-                self.pl_list.item(i).setCheckState(Qt.Unchecked)
-            self.selected_videos.clear()
-            self.pl_all_btn.setText('☑️ 全选')
-            self.pl_count_lbl.setText(f'已选 0/{total}')
-        else:
-            # 全选
-            for i in range(self.pl_list.count()):
-                self.pl_list.item(i).setCheckState(Qt.Checked)
-            self.selected_videos = set(range(total))
-            self.pl_all_btn.setText('❌ 全不选')
-            self.pl_count_lbl.setText(f'已选 {total}/{total}')
-        self.pl_list.blockSignals(False)
+        screen = QApplication.primaryScreen().geometry()
+        main_rect = self.geometry()
+        dlg_w, dlg_h = self._playlist_dialog.width(), self._playlist_dialog.height()
+        # 尝试放在主窗口右侧
+        x = main_rect.right() + 10
+        y = main_rect.top()
+        # 右侧装不下就放左侧
+        if x + dlg_w > screen.right():
+            x = main_rect.left() - dlg_w - 10
+        # 左侧也装不下就居中
+        if x < screen.left():
+            x = (screen.width() - dlg_w) // 2
+            y = (screen.height() - dlg_h) // 2
+        self._playlist_dialog.move(x, y)
+
+    def _on_open_playlist_dialog(self):
+        """用户点击主窗口的"播放列表"按钮时调用"""
+        if not self.playlist_videos:
+            self._log('⚠️ 请先点击"获取"加载播放列表')
+            return
+        self._open_playlist_dialog()
+
+    def _on_dialog_selection_changed(self, sel, total):
+        """弹窗里选中数变化时同步到主窗口"""
+        self.selected_videos = set()
+        if hasattr(self, '_playlist_dialog') and self._playlist_dialog:
+            for idx in self._playlist_dialog.get_selected_indices():
+                self.selected_videos.add(idx)
+        # 更新主窗口按钮文字
+        if self.playlist_videos:
+            self.playlist_chk.setText(f'📋 播放列表 ({len(self.selected_videos)}/{len(self.playlist_videos)})')
+
+    # 注：_on_playlist_item_changed / _on_playlist_invert / _on_playlist_select_all
+    # 这些方法已废弃，相关逻辑移到了 PlaylistDialog 类里。
+    # 主窗口通过 _on_dialog_selection_changed 接收选择变化。
+
+    def _on_playlist_item_changed_legacy(self, item):
+        """旧 pl_list（已隐藏）的占位回调，不再更新 UI（弹窗是主交互入口）"""
+        pass
 
     @Slot(str)
     def _on_playlist_load_err(self, e):
