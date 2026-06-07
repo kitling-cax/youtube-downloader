@@ -21,7 +21,7 @@
 
 | 项目 | 值 |
 |------|-----|
-| **最新 Release** | v1.0.0 |
+| **最新 Release** | v1.1.0 |
 | Release 标题 | v1.0.0 - 首次发布 |
 | 发布时间 | 2026-06-07 06:09:29 UTC |
 | Release URL | https://github.com/kitling-cax/youtube-downloader/releases/tag/v1.0.0 |
