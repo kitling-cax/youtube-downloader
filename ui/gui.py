@@ -1035,9 +1035,22 @@ class GlassWidget(QWidget):
                         self.prog.emit(d)
 
                     if self.is_pl:
-                        self.dl.download_playlist(self.u, self.f, progress_callback=h, cancel_event=self.cancel_ev, playlist_items=self.pl_items)
+                        result = self.dl.download_playlist(self.u, self.f, progress_callback=h, cancel_event=self.cancel_ev, playlist_items=self.pl_items)
+                        # 把播放列表下载结果暂存到 GlassWidget，供 _on_done 读取
+                        # result = {'titles': [...], 'skipped': [...]}
+                        try:
+                            QApplication.instance()._last_playlist_result = result
+                        except Exception:
+                            pass
                     else:
-                        self.dl.download(self.u, self.f, progress_callback=h, cancel_event=self.cancel_ev)
+                        title = self.dl.download(self.u, self.f, progress_callback=h, cancel_event=self.cancel_ev)
+                        # 单视频下载：title 为 None 表示失败
+                        try:
+                            app = QApplication.instance()
+                            app._last_single_title = title
+                            app._last_single_title_set = True
+                        except Exception:
+                            pass
                     self.done.emit()
                 except Exception as e:
                     self.err.emit(str(e))
@@ -1065,11 +1078,39 @@ class GlassWidget(QWidget):
 
     @Slot()
     def _on_done(self):
-        self.status_lbl.setText('✅ 完成!')
-        self._log('✅ 下载完成!')
         self.is_downloading = False
         self._reset_download_btn()
         self.progress_bar.setValue(100)
+
+        # 显示下载结果统计
+        app = QApplication.instance()
+        # 播放列表
+        pl_result = getattr(app, '_last_playlist_result', None)
+        if pl_result is not None:
+            titles = pl_result.get('titles', [])
+            skipped = pl_result.get('skipped', [])
+            self._log(f'✅ 播放列表下载完成: 成功 {len(titles)} 个')
+            if skipped:
+                self._log(f'⏭ 跳过 {len(skipped)} 个失败视频')
+                for s in skipped[:5]:
+                    self._log(f'   - {s[:60]}')
+                if len(skipped) > 5:
+                    self._log(f'   ... 还有 {len(skipped)-5} 个')
+                self.status_lbl.setText(f'✅ 完成 ({len(titles)} 成功, {len(skipped)} 跳过)')
+            else:
+                self.status_lbl.setText(f'✅ 全部完成 ({len(titles)} 个)')
+            app._last_playlist_result = None
+        else:
+            # 单视频
+            single_title = getattr(app, '_last_single_title', None)
+            if single_title is None and getattr(app, '_last_single_title_set', False):
+                self._log('❌ 视频下载失败（可能已删除/地区限制/无权限）')
+                self.status_lbl.setText('⚠️ 下载失败')
+            else:
+                self._log(f'✅ 下载完成: {single_title}')
+                self.status_lbl.setText('✅ 完成!')
+            app._last_single_title = None
+            app._last_single_title_set = False
 
     @Slot(str)
     def _on_err(self, e):

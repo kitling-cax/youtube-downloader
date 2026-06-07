@@ -21,6 +21,8 @@ class VideoDownloader:
             'outtmpl': os.path.join(self.output_dir, '%(title)s.%(ext)s'),
             'quiet': True,
             'no_warnings': True,
+            # 关键：跳过列表中无效/被删除/地区限制的视频，避免一个失败中断整个下载
+            'ignoreerrors': True,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             },
@@ -94,7 +96,7 @@ class VideoDownloader:
     def download(self, url: str, format_id: str = 'best',
                  progress_callback=None, cancel_event=None,
                  force_single=True) -> str:
-        """下载单个视频，返回视频标题"""
+        """下载单个视频，返回视频标题（失败返回 None）"""
         try:
             opts = self.ydl_opts.copy()
             opts['quiet'] = False
@@ -109,6 +111,9 @@ class VideoDownloader:
 
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
+                # ignoreerrors=True 时 info 可能为 None（视频失效/被删除/地区限制）
+                if info is None:
+                    return None
                 return info.get('title', 'Unknown')
 
         except DownloadCancelled:
@@ -116,9 +121,12 @@ class VideoDownloader:
 
     def download_playlist(self, url: str, format_id: str = 'best',
                          progress_callback=None, cancel_event=None,
-                         playlist_items=None) -> list:
-        """下载播放列表，返回所有下载的视频标题列表
+                         playlist_items=None) -> dict:
+        """下载播放列表，返回 {'titles': 成功列表, 'skipped': 失败数量}
         playlist_items: 要下载的视频索引列表 (从1开始)，None表示全部
+
+        注意：设置了 ignoreerrors=True（继承自 ydl_opts），所以列表中
+        失效/被删除/地区限制的视频会自动跳过，不会中断整个下载。
         """
         try:
             opts = self.ydl_opts.copy()
@@ -133,13 +141,25 @@ class VideoDownloader:
                 opts['playlist_items'] = ','.join(map(str, playlist_items))
 
             titles = []
+            skipped = []
 
             def _collect_title(d):
-                if d.get('status') == 'finished':
-                    info = d.get('info_dict') or {}
+                status = d.get('status')
+                info = d.get('info_dict') or {}
+                if status == 'finished':
                     title = info.get('title', '')
                     if title:
                         titles.append(title)
+                elif status == 'error':
+                    # 视频失败（被删除/地区限制/无权限等）
+                    title = info.get('title') or 'Unknown'
+                    skipped.append(title)
+                    # 通过 progress_callback 通知 UI
+                    if progress_callback:
+                        progress_callback({
+                            'pct': 0,
+                            'info': f'⏭ 跳过失败: {title}',
+                        })
 
             opts['progress_hooks'] = [
                 self._make_progress_hook(progress_callback, cancel_event),
@@ -149,7 +169,7 @@ class VideoDownloader:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
 
-            return titles
+            return {'titles': titles, 'skipped': skipped}
 
         except DownloadCancelled:
             raise Exception('cancelled')
